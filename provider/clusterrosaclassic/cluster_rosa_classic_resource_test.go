@@ -44,6 +44,12 @@ func (c MockHttpClient) Get(url string) (resp *http.Response, err error) {
 	return c.response, nil
 }
 
+type roundTripFunc func(r *http.Request) (*http.Response, error)
+
+func (s roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return s(r)
+}
+
 const (
 	clusterId         = "1n2j3k4l5m6n7o8p9q0r"
 	clusterName       = "my-cluster"
@@ -78,6 +84,42 @@ var (
 			},
 		},
 	}
+	ingressObjectAsString = `{
+  "kind": "IngressList",
+  "href": "/api/clusters_mgmt/v1/clusters/25qdoe7kf5fbc1aj3l77ait54obh2g22/ingresses",
+  "page": 1,
+  "size": 1,
+  "total": 1,
+  "items": [
+    {
+      "kind": "Ingress",
+      "href": "/api/clusters_mgmt/v1/clusters/25qdoe7kf5fbc1aj3l77ait54obh2g22/ingresses/h1w0",
+      "id": "h1w0",
+      "listening": "external",
+      "default": true,
+      "dns_name": "apps.itsoiref-tf.t9ep.s1.devshift.org",
+      "route_selectors": {
+        "foo": "bar",
+        "ui": "boom",
+        "yu": "1113"
+      },
+      "load_balancer_type": "nlb",
+      "route_wildcard_policy": "WildcardsAllowed",
+      "route_namespace_ownership_policy": "Strict"
+    }, 
+{
+      "kind": "Ingress",
+      "id": "not-default",
+      "listening": "external",
+      "default": false,
+      "route_selectors": {
+      },
+      "route_wildcard_policy": "not-default",
+      "route_namespace_ownership_policy": "not-default"
+    }
+  ]
+}
+`
 )
 
 func generateBasicRosaClassicClusterJson() map[string]interface{} {
@@ -160,6 +202,14 @@ func TestResource(t *testing.T) {
 }
 
 var _ = Describe("Rosa Classic Sts cluster", func() {
+	dummyTransportMock := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"mock":"mock"}`)),
+		}, nil
+	})
+	clustersClientMock := cmv1.NewClustersClient(dummyTransportMock, "")
+
 	Context("createClassicClusterObject", func() {
 		It("Creates a cluster with correct field values", func() {
 			clusterState := generateBasicRosaClassicClusterState()
@@ -230,8 +280,7 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 
 			clusterObject, err := cmv1.UnmarshalCluster(clusterJsonString)
 			Expect(err).To(BeNil())
-
-			Expect(populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient)).To(Succeed())
+			Expect(populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient, clustersClientMock)).To(Succeed())
 
 			Expect(clusterState.ID.ValueString()).To(Equal(clusterId))
 			Expect(clusterState.CloudRegion.ValueString()).To(Equal(regionId))
@@ -263,6 +312,30 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 			Expect(clusterState.Sts.RoleARN.ValueString()).To(Equal(roleArn))
 			Expect(clusterState.Ec2MetadataHttpTokens.ValueString()).To(Equal(httpTokens))
 		})
+		It("Populate default ingress", func() {
+			clusterState := &ClusterRosaClassicState{}
+			clusterState.DefaultIngress = &DefaultIngress{}
+			clusterJson := generateBasicRosaClassicClusterJson()
+			clusterJsonString, err := json.Marshal(clusterJson)
+			Expect(err).To(BeNil())
+
+			clusterObject, err := cmv1.UnmarshalCluster(clusterJsonString)
+			Expect(err).To(BeNil())
+			transportIngress := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(ingressObjectAsString)),
+				}, nil
+			})
+			clustersClientMock = cmv1.NewClustersClient(transportIngress, "")
+			Expect(populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient,
+				clustersClientMock)).To(Succeed())
+			Expect(clusterState.DefaultIngress.Id.ValueSt).To(Equal("h1w0"))
+			Expect(clusterState.DefaultIngress.WildcardPolicy.Value).To(Equal("WildcardsAllowed"))
+			Expect(clusterState.DefaultIngress.NamespaceOwnershipPolicy.Value).To(Equal("Strict"))
+			Expect(len(clusterState.DefaultIngress.RouteSelectors.Elems)).To(Equal(3))
+			Expect(clusterState.DefaultIngress.RouteSelectors.Elems["foo"]).To(Equal(types.String{Value: "bar"}))
+		})
 
 		It("Check trimming of oidc url with https perfix", func() {
 			clusterState := &ClusterRosaClassicState{}
@@ -277,7 +350,7 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 			clusterObject, err := cmv1.UnmarshalCluster(clusterJsonString)
 			Expect(err).To(BeNil())
 
-			err = populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient)
+			err = populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient, clustersClientMock)
 			Expect(err).To(BeNil())
 			Expect(clusterState.Sts.OIDCEndpointURL.ValueString()).To(Equal("nonce.com"))
 		})
@@ -293,7 +366,7 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 			clusterObject, err := cmv1.UnmarshalCluster(clusterJsonString)
 			Expect(err).To(BeNil())
 
-			err = populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient)
+			err = populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient, clustersClientMock)
 			Expect(err).To(BeNil())
 			Expect(clusterState.Sts.Thumbprint.ValueString()).To(Equal(""))
 		})

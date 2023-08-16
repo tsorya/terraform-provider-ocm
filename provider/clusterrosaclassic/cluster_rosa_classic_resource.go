@@ -312,6 +312,12 @@ func (r *ClusterRosaClassicResource) Schema(ctx context.Context, req resource.Sc
 				Optional:    true,
 				Validators:  []validator.Object{proxy.ProxyValidator()},
 			},
+			"default_ingress": schema.SingleNestedAttribute{
+				Description: "default_ingress",
+				Attributes:  ingressResource(),
+				Optional:    true,
+				Computed:    true,
+			},
 			"service_cidr": schema.StringAttribute{
 				Description: "Block of IP addresses for services.",
 				Optional:    true,
@@ -635,6 +641,8 @@ func createClassicClusterObject(ctx context.Context,
 		builder.Htpasswd(htPasswdIDP)
 	}
 
+	builder = setIngress(state, builder)
+
 	builder, err = buildProxy(state, builder)
 	if err != nil {
 		tflog.Error(ctx, "Failed to build the Proxy's attributes")
@@ -839,6 +847,18 @@ func (r *ClusterRosaClassicResource) Create(ctx context.Context, request resourc
 		return
 	}
 
+	err = validateDefaultIngress(ctx, state, version)
+	if err != nil {
+		response.Diagnostics.AddError(
+			summary,
+			fmt.Sprintf(
+				"Can't build cluster with name '%s': %v",
+				state.Name.ValueString(), err,
+			),
+		)
+		return
+	}
+
 	object, err := createClassicClusterObject(ctx, state, diags)
 	if err != nil {
 		response.Diagnostics.AddError(
@@ -865,7 +885,7 @@ func (r *ClusterRosaClassicResource) Create(ctx context.Context, request resourc
 	object = add.Body()
 
 	// Save the state:
-	err = populateRosaClassicClusterState(ctx, object, state, common.DefaultHttpClient{})
+	err = populateRosaClassicClusterState(ctx, object, state, common.DefaultHttpClient{}, r.clusterCollection)
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Can't populate cluster state",
@@ -912,7 +932,7 @@ func (r *ClusterRosaClassicResource) Read(ctx context.Context, request resource.
 	object := get.Body()
 
 	// Save the state:
-	err = populateRosaClassicClusterState(ctx, object, state, common.DefaultHttpClient{})
+	err = populateRosaClassicClusterState(ctx, object, state, common.DefaultHttpClient{}, r.clusterCollection)
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Can't populate cluster state",
@@ -1018,6 +1038,18 @@ func (r *ClusterRosaClassicResource) Update(ctx context.Context, request resourc
 		return
 	}
 
+	err = updateIngress(ctx, state, plan, r.clusterCollection)
+	if err != nil {
+		response.Diagnostics.AddError(
+			"Can't update cluster ingress",
+			fmt.Sprintf(
+				"Can't update cluster with identifier '%s': %v",
+				state.ID.ValueString(), err,
+			),
+		)
+		return
+	}
+
 	update, err := r.clusterCollection.Cluster(state.ID.ValueString()).Update().
 		Body(clusterSpec).
 		SendContext(ctx)
@@ -1041,7 +1073,7 @@ func (r *ClusterRosaClassicResource) Update(ctx context.Context, request resourc
 	object := update.Body()
 
 	// Update the state:
-	err = populateRosaClassicClusterState(ctx, object, plan, common.DefaultHttpClient{})
+	err = populateRosaClassicClusterState(ctx, object, plan, common.DefaultHttpClient{}, r.clusterCollection)
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Can't populate cluster state",
@@ -1368,7 +1400,7 @@ func (r *ClusterRosaClassicResource) ImportState(ctx context.Context, request re
 }
 
 // populateRosaClassicClusterState copies the data from the API object to the Terraform state.
-func populateRosaClassicClusterState(ctx context.Context, object *cmv1.Cluster, state *ClusterRosaClassicState, httpClient common.HttpClient) error {
+func populateRosaClassicClusterState(ctx context.Context, object *cmv1.Cluster, state *ClusterRosaClassicState, httpClient common.HttpClient, clusterCollection *cmv1.ClustersClient) error {
 	state.ID = types.StringValue(object.ID())
 	state.ExternalID = types.StringValue(object.ExternalID())
 	object.API()
@@ -1617,6 +1649,11 @@ func populateRosaClassicClusterState(ctx context.Context, object *cmv1.Cluster, 
 	state.State = types.StringValue(string(object.State()))
 	state.Name = types.StringValue(object.Name())
 	state.CloudRegion = types.StringValue(object.Region().ID())
+
+	err := populateDefaultIngress(ctx, state, clusterCollection.Cluster(state.ID.Value).Ingresses())
+	if err != nil {
+		return err
+	}
 
 	return nil
 }

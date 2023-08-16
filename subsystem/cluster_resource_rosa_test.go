@@ -18,13 +18,13 @@ package provider
 
 import (
 	"encoding/json"
+	"github.com/terraform-redhat/terraform-provider-rhcs/build"
 	"net/http"
 
 	. "github.com/onsi/ginkgo/v2/dsl/core"             // nolint
 	. "github.com/onsi/gomega"                         // nolint
 	. "github.com/onsi/gomega/ghttp"                   // nolint
 	. "github.com/openshift-online/ocm-sdk-go/testing" // nolint
-	"github.com/terraform-redhat/terraform-provider-rhcs/build"
 )
 
 const versionListPage1 = `{
@@ -37,6 +37,12 @@ const versionListPage1 = `{
 			"id": "openshift-v4.10.1",
 			"href": "/api/clusters_mgmt/v1/versions/openshift-v4.10.1",
 			"raw_id": "4.10.1"
+		},
+		{
+			"kind": "Version",
+			"id": "openshift-4.14.0",
+			"href": "/api/clusters_mgmt/v1/versions/openshift-4.14.0",
+			"raw_id": "4.14.0"
 		},
 		{
 			"kind": "Version",
@@ -3778,6 +3784,477 @@ var _ = Describe("rhcs_cluster_rosa_classic - import", func() {
 			resource := terraform.Resource("rhcs_cluster_rosa_classic", "my_cluster")
 			Expect(resource).To(MatchJQ(".attributes.current_version", "4.10.0"))
 		})
+
+	})
+})
+
+var _ = Describe("rhcs_cluster_rosa_classic - default ingress", func() {
+	const template = `{
+		"id": "123",
+		"name": "my-cluster",
+		"region": {
+		  "id": "us-west-1"
+		},
+		"aws": {
+			"ec2_metadata_http_tokens": "optional",
+			"sts": {
+				"oidc_endpoint_url": "https://127.0.0.2",
+				"thumbprint": "111111",
+				"role_arn": "",
+				"support_role_arn": "",
+				"instance_iam_roles" : {
+					"master_role_arn" : "",
+					"worker_role_arn" : ""
+				},
+				"operator_role_prefix" : "test"
+			}
+		},
+		"multi_az": true,
+		"api": {
+		  "url": "https://my-api.example.com"
+		},
+		"console": {
+		  "url": "https://my-console.example.com"
+		},
+		"network": {
+		  "machine_cidr": "10.0.0.0/16",
+		  "service_cidr": "172.30.0.0/16",
+		  "pod_cidr": "10.128.0.0/14",
+		  "host_prefix": 23
+		},
+		"nodes": {
+			"compute": 3,
+			"compute_machine_type": {
+				"id": "r5.xlarge"
+			}
+		},
+		"version": {
+			"id": "4.10.0"
+		}
+	}`
+
+	It("Create cluster with default ingress - excluded_namespaces set", func() {
+		// Prepare the server:
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/versions"),
+				RespondWithJSON(http.StatusOK, versionListPage1),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPost, "/api/clusters_mgmt/v1/clusters"),
+				VerifyJQ(`.ingresses.items[0].excluded_namespaces[0]`, "stage"),
+				RespondWithJSON(http.StatusCreated, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+			 "kind": "IngressList",
+			 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+			 "page": 1,
+			 "size": 1,
+			 "total": 1,
+			 "items": [
+			   {
+			     "kind": "Ingress",
+			     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+			     "id": "d6z2",
+			     "listening": "external",
+			     "default": true,
+			     "dns_name": "redhat.com",
+			     "load_balancer_type": "classic",
+			     "excluded_namespaces": [
+			        "stage",
+			        "int",
+			        "aaa"
+			     ],
+			     "route_wildcard_policy": "WildcardsDisallowed",
+			     "route_namespace_ownership_policy": "Strict"
+			   }
+			 ]
+			}
+			`),
+			),
+		)
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+		    name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			version = "4.14.0"
+			sts = {
+				operator_role_prefix = "test"
+				role_arn = "",
+				support_role_arn = "",
+				instance_iam_roles = {
+					master_role_arn = "",
+					worker_role_arn = "",
+				}
+			}
+			default_ingress = {
+                excluded_namespaces = ["stage", "int", "aaa"]
+            }
+		}`)
+		Expect(terraform.Apply()).To(BeZero())
+	})
+
+	It("Create cluster with default ingress and update params - verify that route_selectors and excluded_namespaces"+
+		" params are cleaned on deletion though route_wildcard_policy and route_namespace_ownership_policy are nil", func() {
+		// Prepare the server:
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/versions"),
+				RespondWithJSON(http.StatusOK, versionListPage1),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPost, "/api/clusters_mgmt/v1/clusters"),
+				VerifyJQ(`.ingresses.items[0].route_selectors["foo"]`, "bar"),
+				VerifyJQ(`.ingresses.items[0].route_wildcard_policy`, "WildcardsAllowed"),
+				VerifyJQ(`.ingresses.items[0].route_namespace_ownership_policy`, "Strict"),
+				RespondWithJSON(http.StatusCreated, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+			 "kind": "IngressList",
+			 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+			 "page": 1,
+			 "size": 1,
+			 "total": 1,
+			 "items": [
+			   {
+			     "kind": "Ingress",
+			     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+			     "id": "d6z2",
+			     "listening": "external",
+			     "default": true,
+			     "dns_name": "redhat.com",
+			     "load_balancer_type": "classic",
+				 "route_selectors": {
+                    "foo": "bar"
+                 },
+			     "route_wildcard_policy": "WildcardsAllowed",
+			     "route_namespace_ownership_policy": "Strict"
+			   }
+			 ]
+			}
+			`),
+			),
+		)
+
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+		    name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			version = "4.14.0"
+			sts = {
+				operator_role_prefix = "test"
+				role_arn = "",
+				support_role_arn = "",
+				instance_iam_roles = {
+					master_role_arn = "",
+					worker_role_arn = "",
+				}
+			}
+			default_ingress = {
+              route_wildcard_policy = "WildcardsAllowed",
+              route_namespace_ownership_policy = "Strict"
+              route_selectors = {
+                    "foo" = "bar",
+              },
+		  }
+		}`)
+		Expect(terraform.Apply()).To(BeZero())
+
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123"),
+				RespondWithJSON(http.StatusCreated, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+				 "kind": "IngressList",
+				 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+				 "page": 1,
+				 "size": 1,
+				 "total": 1,
+				 "items": [
+				   {
+				     "kind": "Ingress",
+				     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+				     "id": "d6z2",
+				     "listening": "external",
+				     "default": true,
+				     "dns_name": "redhat.com",
+				     "load_balancer_type": "classic",
+					 "route_selectors": {
+			         "foo": "bar"
+			      },
+				     "route_wildcard_policy": "WildcardsAllowed",
+				     "route_namespace_ownership_policy": "Strict"
+				   }
+				 ]
+				}
+				`),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPatch, "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2"),
+				VerifyJQ(`.ingresses.items[0].route_selectors`, nil),
+				VerifyJQ(`.ingresses.items[0].excluded_namespaces`, nil),
+				RespondWithJSON(http.StatusOK, `{
+				 "kind": "IngressList",
+				 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+				 "page": 1,
+				 "size": 1,
+				 "total": 1,
+				 "items": [
+				   {
+				     "kind": "Ingress",
+				     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+				     "id": "d6z2",
+				     "listening": "external",
+				     "default": true,
+				     "dns_name": "redhat.com",
+				     "load_balancer_type": "classic",
+				     "route_wildcard_policy": "WildcardsAllowed",
+				     "route_namespace_ownership_policy": "Strict",
+					 "cluster_routes_tls_secret_ref": "111",
+					 "cluster_routes_hostname": "222"
+				   }
+				 ]
+				}
+				`),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPatch, "/api/clusters_mgmt/v1/clusters/123"),
+				RespondWithJSON(http.StatusOK, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+				 "kind": "IngressList",
+				 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+				 "page": 1,
+				 "size": 1,
+				 "total": 1,
+				 "items": [
+				   {
+				     "kind": "Ingress",
+				     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+				     "id": "d6z2",
+				     "listening": "external",
+				     "default": true,
+				     "dns_name": "redhat.com",
+				     "load_balancer_type": "classic",
+				     "route_wildcard_policy": "WildcardsAllowed",
+				     "route_namespace_ownership_policy": "Strict",
+					 "cluster_routes_hostname": "222",
+                     "cluster_routes_tls_secret_ref": "111"
+				   }
+				 ]
+				}
+				`),
+			),
+		)
+
+		terraform.Source(`
+		 resource "rhcs_cluster_rosa_classic" "my_cluster" {
+		    name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+	        aws_account_id = "123"
+			id = "123"
+            sts = {
+				operator_role_prefix = "test"
+				role_arn = "",
+				support_role_arn = "",
+				instance_iam_roles = {
+					master_role_arn = "",
+					worker_role_arn = "",
+				}
+			}
+			default_ingress = {
+				cluster_routes_tls_secret_ref = "111",
+				cluster_routes_hostname = "222"
+		 }
+		}`)
+		Expect(terraform.Apply()).To(BeZero())
+
+	})
+	It("Fail to create cluster with default ingress - empty map and list", func() {
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+            name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			default_ingress = {
+              route_selectors = {}
+              excluded_namespaces = []
+		  }
+		}`)
+		Expect(terraform.Apply()).ToNot(BeZero())
+	})
+
+	It("Fail to create cluster with cluster_routes_hostname and cluster_routes_tls_secret_ref set", func() {
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/versions"),
+				RespondWithJSON(http.StatusOK, versionListPage1),
+			),
+		)
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+            name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			default_ingress = {
+				cluster_routes_hostname = "aaa"
+				cluster_routes_tls_secret_ref = "hhh"
+		  }
+		}`)
+		Expect(terraform.Apply()).ToNot(BeZero())
+	})
+
+	It("Fail to create cluster with cluster_routes_hostname set", func() {
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/versions"),
+				RespondWithJSON(http.StatusOK, versionListPage1),
+			),
+		)
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+            name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			default_ingress = {
+				cluster_routes_hostname = "aaa"
+		  }
+		}`)
+		Expect(terraform.Apply()).ToNot(BeZero())
+	})
+
+	It("Create cluster with default ingress and update params - failed ot update if only cluster_routes_hostname set", func() {
+		// Prepare the server:
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/versions"),
+				RespondWithJSON(http.StatusOK, versionListPage1),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodPost, "/api/clusters_mgmt/v1/clusters"),
+				RespondWithJSON(http.StatusCreated, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+			 "kind": "IngressList",
+			 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+			 "page": 1,
+			 "size": 1,
+			 "total": 1,
+			 "items": [
+			   {
+			     "kind": "Ingress",
+			     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+			     "id": "d6z2",
+			     "listening": "external",
+			     "default": true,
+			     "dns_name": "redhat.com",
+			     "load_balancer_type": "classic",
+			     "route_wildcard_policy": "WildcardsAllowed",
+			     "route_namespace_ownership_policy": "Strict"
+			   }
+			 ]
+			}
+			`),
+			),
+		)
+
+		// Run the apply command:
+		terraform.Source(`
+		  resource "rhcs_cluster_rosa_classic" "my_cluster" {
+		    name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+			aws_account_id = "123"
+			version = "4.14.0"
+			sts = {
+				operator_role_prefix = "test"
+				role_arn = "",
+				support_role_arn = "",
+				instance_iam_roles = {
+					master_role_arn = "",
+					worker_role_arn = "",
+				}
+			}
+			default_ingress = {
+              route_wildcard_policy = "WildcardsAllowed",
+              route_namespace_ownership_policy = "Strict"
+		  }
+		}`)
+		Expect(terraform.Apply()).To(BeZero())
+
+		server.AppendHandlers(
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123"),
+				RespondWithJSON(http.StatusCreated, template),
+			),
+			CombineHandlers(
+				VerifyRequest(http.MethodGet, "/api/clusters_mgmt/v1/clusters/123/ingresses"),
+				RespondWithJSON(http.StatusOK, `{
+				 "kind": "IngressList",
+				 "href": "/api/clusters_mgmt/v1/clusters/123/ingresses",
+				 "page": 1,
+				 "size": 1,
+				 "total": 1,
+				 "items": [
+				   {
+				     "kind": "Ingress",
+				     "href": "/api/clusters_mgmt/v1/clusters/123/ingresses/d6z2",
+				     "id": "d6z2",
+				     "listening": "external",
+				     "default": true,
+				     "dns_name": "redhat.com",
+				     "load_balancer_type": "classic",
+					 "route_selectors": {
+			         "foo": "bar"
+			      },
+				     "route_wildcard_policy": "WildcardsAllowed",
+				     "route_namespace_ownership_policy": "Strict"
+				   }
+				 ]
+				}
+				`),
+			),
+		)
+
+		terraform.Source(`
+		 resource "rhcs_cluster_rosa_classic" "my_cluster" {
+		    name           = "my-cluster"
+		    cloud_region   = "us-west-1"
+	        aws_account_id = "123"
+			id = "123"
+            sts = {
+				operator_role_prefix = "test"
+				role_arn = "",
+				support_role_arn = "",
+				instance_iam_roles = {
+					master_role_arn = "",
+					worker_role_arn = "",
+				}
+			}
+			default_ingress = {
+              route_wildcard_policy = "WildcardsAllowed",
+              route_namespace_ownership_policy = "Strict"
+			  cluster_routes_hostname = "test"
+		  }
+		}`)
+		Expect(terraform.Apply()).ToNot(BeZero())
 
 	})
 })

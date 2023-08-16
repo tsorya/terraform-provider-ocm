@@ -65,6 +65,7 @@ type ClusterRosaClassicState struct {
 	Ec2MetadataHttpTokens     types.String      `tfsdk:"ec2_metadata_http_tokens"`
 	UpgradeAcksFor            types.String      `tfsdk:"upgrade_acknowledgements_for"`
 	AdminCredentials          *AdminCredentials `tfsdk:"admin_credentials"`
+	DefaultIngress            *DefaultIngress   `tfsdk:"default_ingress"`
 }
 
 type Sts struct {
