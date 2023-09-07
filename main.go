@@ -24,6 +24,10 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6/tf6server"
+	"github.com/hashicorp/terraform-plugin-mux/tf5to6server"
+	"github.com/hashicorp/terraform-plugin-mux/tf6muxserver"
+
+	"github.com/terraform-redhat/terraform-provider-rhcs/internal/rhcs/fwprovider"
 	"github.com/terraform-redhat/terraform-provider-rhcs/internal/rhcs/provider"
 )
 
@@ -56,10 +60,10 @@ func main() {
 	}
 
 	providers := []func() tfprotov6.ProviderServer{
-		providerserver.NewProtocol6(fwprovider.New()()), // Example terraform-plugin-framework provider
-		func() tfprotov6.ProviderServer {
-			return upgradedSdkServer
-		},
+		providerserver.NewProtocol6(fwprovider.New("test")()), // Example terraform-plugin-framework provider
+		//func() tfprotov6.ProviderServer {
+		//	return upgradedSdkServer
+		//},
 	}
 
 	muxServer, err := tf6muxserver.NewMuxServer(ctx, providers...)

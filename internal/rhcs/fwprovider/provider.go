@@ -14,10 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package provider
+package fwprovider
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -25,14 +26,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 )
 
-func New(primary interface{ Meta() interface{} }) provider.Provider {
-	return &fwprovider{
-		Primary: primary,
+func New(version string) func() provider.Provider {
+	return func() provider.Provider {
+		return &fwprovider{
+			version: version,
+		}
 	}
 }
 
 type fwprovider struct {
-	Primary interface{ Meta() interface{} }
+	version string
 }
 
 func (p *fwprovider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -98,9 +101,10 @@ func (p *fwprovider) Schema(ctx context.Context, req provider.SchemaRequest, res
 // provider configuration block.
 func (p *fwprovider) Configure(ctx context.Context, request provider.ConfigureRequest, response *provider.ConfigureResponse) {
 	// Provider's parsed configuration (its instance state) is available through the primary provider's Meta() method.
-	v := p.Primary.Meta()
-	response.DataSourceData = v
-	response.ResourceData = v
+	// Example client configuration for data sources and resources
+	client := http.DefaultClient
+	response.DataSourceData = client
+	response.ResourceData = client
 }
 
 // DataSources satisfies the provider.Provider interface for Provider.
