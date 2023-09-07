@@ -17,18 +17,70 @@ limitations under the License.
 package main
 
 import (
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/plugin"
+	"context"
+	"flag"
+	"log"
+
+	"github.com/hashicorp/terraform-plugin-framework/providerserver"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
+	"github.com/hashicorp/terraform-plugin-go/tfprotov6/tf6server"
 	"github.com/terraform-redhat/terraform-provider-rhcs/internal/rhcs/provider"
 )
 
 // Generate the Terraform clusterservice documentation using `tfplugindocs`:
 //go:generate go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs
 
+// func main() {
+// 	plugin.Serve(&plugin.ServeOpts{
+// 		ProviderFunc: func() *schema.Provider {
+// 			return provider.Provider()
+// 		},
+// 	})
+// }
+
 func main() {
-	plugin.Serve(&plugin.ServeOpts{
-		ProviderFunc: func() *schema.Provider {
-			return provider.Provider()
+	ctx := context.Background()
+
+	var debug bool
+
+	flag.BoolVar(&debug, "debug", false, "set to true to run the provider with support for debuggers like delve")
+	flag.Parse()
+
+	upgradedSdkServer, err := tf5to6server.UpgradeServer(
+		ctx,
+		provider.Provider().GRPCProvider, // Example terraform-plugin-sdk provider
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	providers := []func() tfprotov6.ProviderServer{
+		providerserver.NewProtocol6(fwprovider.New()()), // Example terraform-plugin-framework provider
+		func() tfprotov6.ProviderServer {
+			return upgradedSdkServer
 		},
-	})
+	}
+
+	muxServer, err := tf6muxserver.NewMuxServer(ctx, providers...)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var serveOpts []tf6server.ServeOpt
+
+	if debug {
+		serveOpts = append(serveOpts, tf6server.WithManagedDebug())
+	}
+
+	err = tf6server.Serve(
+		"registry.terraform.io/<namespace>/<provider_name>",
+		muxServer.ProviderServer,
+		serveOpts...,
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
 }
