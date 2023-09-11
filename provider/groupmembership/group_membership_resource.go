@@ -19,14 +19,13 @@ package groupmembership
 import (
 	"context"
 	"fmt"
-	"time"
-
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	sdk "github.com/openshift-online/ocm-sdk-go"
 	cmv1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
+	"github.com/terraform-redhat/terraform-provider-rhcs/provider/common"
 )
 
 type GroupMembershipResource struct {
@@ -70,7 +69,6 @@ func (g *GroupMembershipResource) Schema(ctx context.Context, req resource.Schem
 }
 
 func (g *GroupMembershipResource) Configure(ctx context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-
 	// Prevent panic if the provider has not been configured.
 	if req.ProviderData == nil {
 		return
@@ -98,21 +96,13 @@ func (g *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 	}
 
 	// Wait till the cluster is ready:
-	resource := g.collection.Cluster(state.Cluster.String())
-	pollCtx, cancel := context.WithTimeout(ctx, 1*time.Hour)
-	defer cancel()
-	_, err := resource.Poll().
-		Interval(30 * time.Second).
-		Predicate(func(get *cmv1.ClusterGetResponse) bool {
-			return get.Body().State() == cmv1.ClusterStateReady
-		}).
-		StartContext(pollCtx)
+	err := common.WaitTillClusterReady(ctx, g.collection, state.Cluster.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Can't poll cluster state",
 			fmt.Sprintf(
 				"Can't poll state of cluster with identifier '%s': %v",
-				state.Cluster.String(), err,
+				state.Cluster.ValueString(), err,
 			),
 		)
 		return
@@ -120,26 +110,26 @@ func (g *GroupMembershipResource) Create(ctx context.Context, req resource.Creat
 
 	// Create the membership:
 	builder := cmv1.NewUser()
-	builder.ID(state.User.String())
+	builder.ID(state.User.ValueString())
 	object, err := builder.Build()
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Can't build group membership",
 			fmt.Sprintf(
 				"Can't build group membership for cluster '%s' and group '%s': %v",
-				state.Cluster.String(), state.Group.String(), err,
+				state.Cluster.ValueString(), state.Group.ValueString(), err,
 			),
 		)
 		return
 	}
-	collection := resource.Groups().Group(state.Group.String()).Users()
+	collection := g.collection.Cluster(state.Cluster.ValueString()).Groups().Group(state.Group.ValueString()).Users()
 	add, err := collection.Add().Body(object).SendContext(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Can't create group membership",
 			fmt.Sprintf(
 				"Can't create group membership for cluster '%s' and group '%s': %v",
-				state.Cluster.String(), state.Group.String(), err,
+				state.Cluster.ValueString(), state.Group.ValueString(), err,
 			),
 		)
 		return
@@ -162,9 +152,9 @@ func (g *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 	}
 
 	// Find the group membership:
-	obj := g.collection.Cluster(state.Cluster.String()).Groups().Group(state.Group.String()).
+	obj := g.collection.Cluster(state.Cluster.ValueString()).Groups().Group(state.Group.ValueString()).
 		Users().
-		User(state.ID.String())
+		User(state.ID.ValueString())
 	get, err := obj.Get().SendContext(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -172,7 +162,7 @@ func (g *GroupMembershipResource) Read(ctx context.Context, req resource.ReadReq
 			fmt.Sprintf(
 				"Can't find user group membership identifier '%s' for "+
 					"cluster '%s' and group '%s': %v",
-				state.ID.String(), state.Cluster.String(), state.Group.String(), err,
+				state.ID.ValueString(), state.Cluster.ValueString(), state.Group.ValueString(), err,
 			),
 		)
 		return
@@ -201,9 +191,9 @@ func (g *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 	}
 
 	// Send the request to delete group membership:
-	obj := g.collection.Cluster(state.Cluster.String()).Groups().Group(state.Group.String()).
+	obj := g.collection.Cluster(state.Cluster.ValueString()).Groups().Group(state.Group.ValueString()).
 		Users().
-		User(state.ID.String())
+		User(state.ID.ValueString())
 	_, err := obj.Delete().SendContext(ctx)
 	if err != nil {
 		resp.Diagnostics.AddError(
@@ -211,7 +201,7 @@ func (g *GroupMembershipResource) Delete(ctx context.Context, req resource.Delet
 			fmt.Sprintf(
 				"Can't delete group membership with identifier '%s' for "+
 					"cluster '%s' and group '%s': %v",
-				state.ID.String(), state.Cluster.String(), state.Group.String(), err,
+				state.ID.ValueString(), state.Cluster.ValueString(), state.Group.ValueString(), err,
 			),
 		)
 		return
