@@ -22,8 +22,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"github.com/terraform-redhat/terraform-provider-rhcs/provider/defaultingress"
 	"github.com/terraform-redhat/terraform-provider-rhcs/provider/proxy"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -314,7 +317,7 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 		})
 		It("Populate default ingress", func() {
 			clusterState := &ClusterRosaClassicState{}
-			clusterState.DefaultIngress = &DefaultIngress{}
+			clusterState.DefaultIngress = &defaultingress.DefaultIngress{}
 			clusterJson := generateBasicRosaClassicClusterJson()
 			clusterJsonString, err := json.Marshal(clusterJson)
 			Expect(err).To(BeNil())
@@ -330,11 +333,11 @@ var _ = Describe("Rosa Classic Sts cluster", func() {
 			clustersClientMock = cmv1.NewClustersClient(transportIngress, "")
 			Expect(populateRosaClassicClusterState(context.Background(), clusterObject, clusterState, mockHttpClient,
 				clustersClientMock)).To(Succeed())
-			Expect(clusterState.DefaultIngress.Id.ValueSt).To(Equal("h1w0"))
-			Expect(clusterState.DefaultIngress.WildcardPolicy.Value).To(Equal("WildcardsAllowed"))
-			Expect(clusterState.DefaultIngress.NamespaceOwnershipPolicy.Value).To(Equal("Strict"))
-			Expect(len(clusterState.DefaultIngress.RouteSelectors.Elems)).To(Equal(3))
-			Expect(clusterState.DefaultIngress.RouteSelectors.Elems["foo"]).To(Equal(types.String{Value: "bar"}))
+			Expect(clusterState.DefaultIngress.Id.ValueString()).To(Equal("h1w0"))
+			Expect(clusterState.DefaultIngress.WildcardPolicy.ValueString()).To(Equal("WildcardsAllowed"))
+			Expect(clusterState.DefaultIngress.NamespaceOwnershipPolicy.ValueString()).To(Equal("Strict"))
+			Expect(len(clusterState.DefaultIngress.RouteSelectors.Elements())).To(Equal(3))
+			Expect(clusterState.DefaultIngress.RouteSelectors.Elements()["foo"]).To(Equal(types.StringValue("bar")))
 		})
 
 		It("Check trimming of oidc url with https perfix", func() {

@@ -3789,7 +3789,7 @@ var _ = Describe("rhcs_cluster_rosa_classic - import", func() {
 })
 
 var _ = Describe("rhcs_cluster_rosa_classic - default ingress", func() {
-	const template = `{
+	template := `{
 		"id": "123",
 		"name": "my-cluster",
 		"region": {
@@ -3822,12 +3822,17 @@ var _ = Describe("rhcs_cluster_rosa_classic - default ingress", func() {
 		  "pod_cidr": "10.128.0.0/14",
 		  "host_prefix": 23
 		},
-		"nodes": {
-			"compute": 3,
-			"compute_machine_type": {
-				"id": "r5.xlarge"
-			}
-		},
+		"properties": {
+         "rosa_tf_version": "` + build.Version + `",
+         "rosa_tf_commit": "` + build.Commit + `"
+      },
+	  "nodes": {
+	    "compute": 3,
+        "availability_zones": ["az"],
+	    "compute_machine_type": {
+	      "id": "r5.xlarge"
+	    }
+	  },
 		"version": {
 			"id": "4.10.0"
 		}
@@ -4065,7 +4070,6 @@ var _ = Describe("rhcs_cluster_rosa_classic - default ingress", func() {
 		    name           = "my-cluster"
 		    cloud_region   = "us-west-1"
 	        aws_account_id = "123"
-			id = "123"
             sts = {
 				operator_role_prefix = "test"
 				role_arn = "",
@@ -4238,7 +4242,6 @@ var _ = Describe("rhcs_cluster_rosa_classic - default ingress", func() {
 		    name           = "my-cluster"
 		    cloud_region   = "us-west-1"
 	        aws_account_id = "123"
-			id = "123"
             sts = {
 				operator_role_prefix = "test"
 				role_arn = "",

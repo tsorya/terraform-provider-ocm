@@ -41,6 +41,19 @@ func OptionalMap(ctx context.Context, tfVal types.Map) (map[string]string, error
 	return result, nil
 }
 
+func OptionalList(ctx context.Context, tfVal types.List) ([]string, error) {
+	if !HasValue(tfVal) {
+		return nil, nil
+	}
+	result := make([]string, len(tfVal.Elements()))
+	d := tfVal.ElementsAs(ctx, &result, false)
+	if d.HasError() {
+		return nil, fmt.Errorf("error converting to map object %v", d.Errors()[0].Detail())
+	}
+
+	return result, nil
+}
+
 func StringListToArray(ctx context.Context, tfVal types.List) ([]string, error) {
 	if !HasValue(tfVal) {
 		return nil, nil
