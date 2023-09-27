@@ -545,13 +545,13 @@ func (r *MachinePoolResource) Update(ctx context.Context, req resource.UpdateReq
 	object := update.Body()
 
 	// update the autoscaling enabled with the plan value (important for nil and false cases)
-	state.AutoScalingEnabled = plan.AutoScalingEnabled
+	//state.AutoScalingEnabled = plan.AutoScalingEnabled
 	// update the Replicas with the plan value (important for nil and zero value cases)
-	state.Replicas = plan.Replicas
+	//state.Replicas = plan.Replicas
 
 	// Save the state:
-	r.populateState(object, state)
-	diags = resp.State.Set(ctx, state)
+	r.populateState(object, plan)
+	diags = resp.State.Set(ctx, plan)
 	resp.Diagnostics.Append(diags...)
 }
 
@@ -733,36 +733,6 @@ func (r *MachinePoolResource) ImportState(ctx context.Context, req resource.Impo
 func (r *MachinePoolResource) populateState(object *cmv1.MachinePool, state *MachinePoolState) {
 	state.ID = types.StringValue(object.ID())
 	state.Name = types.StringValue(object.ID())
-
-	if getAWS, ok := object.GetAWS(); ok {
-		if spotMarketOptions, ok := getAWS.GetSpotMarketOptions(); ok {
-			state.UseSpotInstances = types.BoolValue(true)
-			if spotMarketOptions.MaxPrice() != 0 {
-				state.MaxSpotPrice = types.Float64Value(spotMarketOptions.MaxPrice())
-			}
-		}
-	}
-
-	autoscaling, ok := object.GetAutoscaling()
-	if ok {
-		var minReplicas, maxReplicas int
-		state.AutoScalingEnabled = types.BoolValue(true)
-		minReplicas, ok = autoscaling.GetMinReplicas()
-		if ok {
-			state.MinReplicas = types.Int64Value(int64(minReplicas))
-		}
-		maxReplicas, ok = autoscaling.GetMaxReplicas()
-		if ok {
-			state.MaxReplicas = types.Int64Value(int64(maxReplicas))
-		}
-	} else {
-		state.MaxReplicas = types.Int64Null()
-		state.MinReplicas = types.Int64Null()
-	}
-
-	if instanceType, ok := object.GetInstanceType(); ok {
-		state.MachineType = types.StringValue(instanceType)
-	}
 
 	if replicas, ok := object.GetReplicas(); ok {
 		state.Replicas = types.Int64Value(int64(replicas))
